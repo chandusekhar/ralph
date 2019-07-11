@@ -10,6 +10,14 @@ from django.template import Library
 from django.utils.text import slugify
 from django.utils.translation import ugettext_lazy as _
 
+from ralph.accounts.helpers import (
+    get_acceptance_url,
+    get_assets_to_accept,
+    get_assets_to_accept_loan,
+    get_assets_to_accept_return,
+    get_loan_acceptance_url,
+    get_return_acceptance_url
+)
 from ralph.assets.models import BaseObject, Service, ServiceEnvironment
 from ralph.back_office.models import BackOfficeAsset
 from ralph.data_center.models import (
@@ -35,15 +43,38 @@ def get_user_equipment_tile_data(user):
 
 
 def get_user_equipment_to_accept_tile_data(user):
-    from ralph.accounts.helpers import get_assets_to_accept, get_acceptance_url
     assets_to_accept_count = get_assets_to_accept(user).count()
     if not assets_to_accept_count:
         return None
     return {
         'class': 'equipment-to-accept',
-        'label': _('For release'),
+        'label': _('Hardware pick up'),
         'count': assets_to_accept_count,
         'url': get_acceptance_url(user),
+    }
+
+
+def get_user_equipment_to_accept_loan_tile_data(user):
+    assets_to_accept_count = get_assets_to_accept_loan(user).count()
+    if not assets_to_accept_count:
+        return None
+    return {
+        'class': 'equipment-to-accept-loan',
+        'label': _('Hardware loan'),
+        'count': assets_to_accept_count,
+        'url': get_loan_acceptance_url(user),
+    }
+
+
+def get_user_equipment_to_accept_return_tile_data(user):
+    assets_to_accept_count = get_assets_to_accept_return(user).count()
+    if not assets_to_accept_count:
+        return None
+    return {
+        'class': 'equipment-to-accept-return',
+        'label': _('Hardware return'),
+        'count': assets_to_accept_count,
+        'url': get_return_acceptance_url(user),
     }
 
 
@@ -148,6 +179,12 @@ def ralph_summary(context):
     accept_tile_data = get_user_equipment_to_accept_tile_data(user=user)
     if accept_tile_data:
         results.append(accept_tile_data)
+    accept_for_loan_tile_data = get_user_equipment_to_accept_loan_tile_data(user=user)  # noqa
+    if accept_for_loan_tile_data:
+        results.append(accept_for_loan_tile_data)
+    accept_for_return_tile_data = get_user_equipment_to_accept_return_tile_data(user=user)  # noqa
+    if accept_for_return_tile_data:
+        results.append(accept_for_return_tile_data)
     return {'results': results}
 
 

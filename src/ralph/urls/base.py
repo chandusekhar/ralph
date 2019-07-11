@@ -28,10 +28,12 @@ api_urls = list(map(lambda u: url(r'^', include(u)), [
     'ralph.operations.api',
     'ralph.supports.api',
     'ralph.security.api',
+    'ralph.sim_cards.api',
+    'ralph.ssl_certificates.api',
     'ralph.networks.api',
     'ralph.virtual.api',
     'ralph.lib.custom_fields.api.custom_fields_api',
-    'ralph.lib.transitions.api.routers'
+    'ralph.lib.transitions.api.routers',
 ]))
 # include router urls
 # because we're using single router instance and urls are cached inside this
@@ -51,6 +53,7 @@ urlpatterns = [
     url(r'^', include('ralph.admin.autocomplete_urls')),
     url(r'^dhcp/', include('ralph.dhcp.urls')),
     url(r'^deployment/', include('ralph.deployment.urls')),
+    url(r'^virtual/', include('ralph.virtual.urls')),
     url(r'^', include('ralph.lib.transitions.urls')),
     url(r'^i18n/', include('django.conf.urls.i18n')),
     url(

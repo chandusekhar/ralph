@@ -9,6 +9,8 @@ from django.db import models
 from django.dispatch import receiver
 from django.utils.functional import cached_property
 from django.utils.translation import ugettext_lazy as _
+from django_cryptography.fields import encrypt
+from django_extensions.db.fields.json import JSONField
 
 from ralph.admin.helpers import get_value_by_relation_path
 from ralph.assets.models.base import BaseObject
@@ -39,6 +41,18 @@ class CloudProvider(AdminAbsoluteUrlMixin, NamedMixin):
     class Meta:
         verbose_name = _('Cloud provider')
         verbose_name_plural = _('Cloud providers')
+
+    cloud_sync_enabled = models.BooleanField(
+        null=False, blank=False, default=False
+    )
+    cloud_sync_driver = models.CharField(max_length=128, null=True, blank=True)
+    client_config = encrypt(
+        JSONField(
+            blank=True,
+            null=True,
+            verbose_name='client configuration',
+        )
+    )
 
 
 class CloudFlavor(AdminAbsoluteUrlMixin, BaseObject):
@@ -148,6 +162,18 @@ class CloudProject(PreviousStateMixin, AdminAbsoluteUrlMixin, BaseObject):
 
     def __str__(self):
         return 'Cloud Project: {}'.format(self.name)
+
+
+class CloudImage(AdminAbsoluteUrlMixin, models.Model):
+    image_id = models.CharField(
+        verbose_name=_('image ID'),
+        unique=True,
+        max_length=100
+    )
+    name = models.CharField(max_length=200, unique=False)
+
+    def __str__(self):
+        return 'Cloud Image: {}'.format(self.name)
 
 
 @receiver(models.signals.post_save, sender=CloudProject)

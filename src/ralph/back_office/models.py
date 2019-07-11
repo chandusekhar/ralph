@@ -29,6 +29,7 @@ from ralph.assets.models.assets import (
 from ralph.assets.utils import move_parents_models
 from ralph.attachments.helpers import add_attachment_from_disk
 from ralph.lib.external_services import ExternalService, obj_to_dict
+from ralph.lib.hooks import get_hook
 from ralph.lib.mixins.fields import NullableCharField
 from ralph.lib.mixins.models import (
     AdminAbsoluteUrlMixin,
@@ -81,6 +82,8 @@ class BackOfficeAssetStatus(Choices):
     free = _("free")
     reserved = _("reserved")
     sale = _("sale")
+    loan_in_progress = _("loan in progress")
+    return_in_progress = _("return in progress")
 
 
 class OfficeInfrastructure(
@@ -145,30 +148,26 @@ def _check_user_assigned(instances, **kwargs):
     return errors
 
 
-def autocomplete_if_release_report(actions, objects, field_name='user'):
-    """
-    Returns value of the first item in the list objects of the field_name
-    if release_report is actions.
+def autocomplete_user(actions, objects, field_name='user'):
+    """ Returns default value for user transition field.
+
+    When multiple assets are selected, default user/owner is returned only if
+    all assets have the same user assigned. Otherwise None will be returned.
 
     Args:
         actions: Transition action list
         objects: Django models objects
-        field_name: String of name
+        field_name: String of name for user field
 
     Returns:
-        String value from object
+        String value of user pk
     """
-    try:
-        obj = objects[0]
-    except IndexError:
-        return None
+    users = [getattr(obj, field_name, None) for obj in objects]
 
-    value = getattr(obj, field_name, None)
-    if value:
-        for action in actions:
-            if action.__name__ == 'release_report':
-                return str(value.pk)
-    return None
+    if len(set(users)) == 1 and users[0]:
+        return str(users[0].pk)
+    else:
+        return None
 
 
 class BackOfficeAsset(Regionalizable, Asset):
@@ -193,7 +192,12 @@ class BackOfficeAsset(Regionalizable, Asset):
         choices=BackOfficeAssetStatus(),
     )
     imei = NullableCharField(
-        max_length=18, null=True, blank=True, unique=True
+        max_length=18, null=True, blank=True, unique=True,
+        verbose_name=_('IMEI')
+    )
+    imei2 = NullableCharField(
+        max_length=18, null=True, blank=True, unique=True,
+        verbose_name=_('IMEI 2')
     )
     office_infrastructure = models.ForeignKey(
         OfficeInfrastructure, null=True, blank=True
@@ -216,15 +220,18 @@ class BackOfficeAsset(Regionalizable, Asset):
     def __repr__(self):
         return '<BackOfficeAsset: {}>'.format(self.id)
 
-    def validate_imei(self):
-        return IMEI_SINCE_2003.match(self.imei) or \
-            IMEI_UNTIL_2003.match(self.imei)
+    def validate_imei(self, imei):
+        return IMEI_SINCE_2003.match(imei) or IMEI_UNTIL_2003.match(imei)
 
     def clean(self):
         super().clean()
-        if self.imei and not self.validate_imei():
+        if self.imei and not self.validate_imei(self.imei):
             raise ValidationError({
                 'imei': _('%(imei)s is not IMEI format') % {'imei': self.imei}
+            })
+        if self.imei2 and not self.validate_imei(self.imei2):
+            raise ValidationError({
+                'imei2': _('%(imei)s is not IMEI format') % {'imei': self.imei2}  # noqa
             })
 
     def is_liquidated(self, date=None):
@@ -287,9 +294,7 @@ class BackOfficeAsset(Regionalizable, Asset):
             'user': {
                 'field': forms.CharField(label=_('User')),
                 'autocomplete_field': 'user',
-                'default_value': partial(
-                    autocomplete_if_release_report, field_name='user'
-                )
+                'default_value': partial(autocomplete_user, field_name='user')
             }
         },
         run_after=['unassign_user']
@@ -305,9 +310,7 @@ class BackOfficeAsset(Regionalizable, Asset):
             'owner': {
                 'field': forms.CharField(label=_('Owner')),
                 'autocomplete_field': 'owner',
-                'default_value': partial(
-                    autocomplete_if_release_report, field_name='owner'
-                )
+                'default_value': partial(autocomplete_user, field_name='owner')
             }
         },
         help_text=_(
@@ -517,6 +520,7 @@ class BackOfficeAsset(Regionalizable, Asset):
                 'sn': obj.sn,
                 'model': str(obj.model),
                 'imei': obj.imei,
+                'imei2': obj.imei2,
                 'barcode': obj.barcode,
             }
             for obj in instances
@@ -613,11 +617,14 @@ class BackOfficeAsset(Regionalizable, Asset):
     def send_attachments_to_user(cls, requester, transition_id, **kwargs):
         if kwargs.get('attachments'):
             transition = Transition.objects.get(pk=transition_id)
+            context_func = get_hook(
+                'back_office.transition_action.email_context'
+            )
+            context = context_func(transition_name=transition.name)
             email = EmailMessage(
-                subject='Documents for {}'.format(transition.name),
-                body='Please see documents provided in attachments '
-                     'for "{}".'.format(transition.name),
-                from_email=settings.EMAIL_FROM,
+                subject=context.subject,
+                body=context.body,
+                from_email=context.from_email,
                 to=[requester.email]
             )
             for attachment in kwargs['attachments']:
@@ -694,6 +701,7 @@ class BackOfficeAsset(Regionalizable, Asset):
     )
     def convert_to_data_center_asset(cls, instances, **kwargs):
         from ralph.data_center.models.physical import DataCenterAsset, Rack  # noqa
+        from ralph.back_office.helpers import bo_asset_to_dc_asset_status_converter  # noqa
         with transaction.atomic():
             for i, instance in enumerate(instances):
                 data_center_asset = DataCenterAsset()
@@ -705,10 +713,16 @@ class BackOfficeAsset(Regionalizable, Asset):
                 data_center_asset.model = AssetModel.objects.get(
                     pk=kwargs['model']
                 )
+                target_status = int(
+                    Transition.objects.values_list('target', flat=True).get(pk=kwargs['transition_id'])  # noqa
+                )
+                data_center_asset.status = bo_asset_to_dc_asset_status_converter(  # noqa
+                    instance.status, target_status
+                )
                 move_parents_models(
                     instance, data_center_asset,
                     exclude_copy_fields=[
-                        'rack', 'model', 'service_env'
+                        'rack', 'model', 'service_env', 'status'
                     ]
                 )
                 data_center_asset.save()

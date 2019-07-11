@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 from string import Formatter
-from urllib.parse import quote
+from urllib.parse import quote_plus, urlencode
 
 from django.conf import settings
+from django.contrib.admin.utils import unquote
 from django.contrib.auth.admin import GroupAdmin, UserAdmin
 from django.contrib.auth.models import Group
+from django.core.exceptions import PermissionDenied
 from django.core.urlresolvers import reverse
 from django.db.models import Q
 from django.forms.models import model_to_dict
@@ -20,6 +22,7 @@ from ralph.back_office.models import BackOfficeAsset
 from ralph.lib.table import Table
 from ralph.lib.transitions.models import TransitionsHistory
 from ralph.licences.models import Licence
+from ralph.sim_cards.models import SIMCard
 
 # use string for whole app (app_label) or tuple (app_label, model_name) to
 # exclude particular model
@@ -38,6 +41,11 @@ PERMISSIONS_EXCLUDE = [
     ('transitions', 'transitionshistory'),
     ('transitions', 'transitionmodel'),
 ]
+
+
+def quotation_to_inches(text):
+    """Replace quotation by unicode inches sign."""
+    return text.replace('"', '\u2033')
 
 
 class EditPermissionsFormMixin(object):
@@ -74,18 +82,17 @@ class RalphUserChangeForm(
         if field:
             self._simplify_permissions(field.queryset)
 
+    def clean_password(self):
+        """
+        Override django.contrib.auth.forms.UserChangeForm.
+
+        We're not showing password field so we need to skip this method
+        to prevent KeyError.
+        """
+        pass
+
 
 class AssetList(Table):
-
-    def url(self, item):
-        return '<a href="{}">{}</a>'.format(
-            reverse(
-                'admin:back_office_backofficeasset_change',
-                args=(item.id,)
-            ),
-            _('go to asset')
-        )
-    url.title = _('Link')
 
     def buyout_date(self, item):
         if item.model.category.show_buyout_date:
@@ -109,9 +116,28 @@ class AssetList(Table):
         else:
             return []
 
+    def buyout_ticket(self, item):
+        get_params = {
+            "inventory_number": item.barcode,
+            "serial_number": item.sn,
+            "model": quotation_to_inches(str(item.model)),
+            "comment": item.buyout_date
+        }
+        url = "?".join(
+            [settings.MY_EQUIPMENT_BUYOUT_URL, urlencode(get_params)]
+        )
+        url_title = 'Report buyout'
+        return self.create_report_link(url, url_title, item)
+    buyout_ticket.title = 'buyout_ticket'
+
     def report_failure(self, item):
-        item_dict = model_to_dict(item)
         url = settings.MY_EQUIPMENT_REPORT_FAILURE_URL
+        url_title = 'Report failure'
+        return self.create_report_link(url, url_title, item)
+    report_failure.title = ''
+
+    def create_report_link(self, url, url_title, item):
+        item_dict = model_to_dict(item)
         if url:
             placeholders = [
                 k[1] for k in Formatter().parse(url) if k[1] is not None
@@ -126,15 +152,15 @@ class AssetList(Table):
                 """
                 Escape URL param and replace quotation by unicode inches sign
                 """
-                return quote(str(p).replace('"', '\u2033'))
+                return quote_plus(quotation_to_inches(str(p)))
+
             return '<a href="{}" target="_blank">{}</a><br />'.format(
                 url.format(
                     **{k: escape_param(v) for (k, v) in item_dict.items()}
                 ),
-                _('Report failure')
+                _(url_title)
             )
         return ''
-    report_failure.title = ''
 
     def confirm_ownership(self, item):
         has_inv_tag = any(
@@ -174,16 +200,11 @@ class AssetList(Table):
 
 
 class AssignedLicenceList(Table):
+    pass
 
-    def url(self, item):
-        return '<a href="{}">{}</a>'.format(
-            reverse(
-                'admin:licences_licence_change',
-                args=(item.id,)
-            ),
-            _('go to licence')
-        )
-    url.title = _('Link')
+
+class AssignedSimcardsList(Table):
+    pass
 
 
 class UserInfoMixin(object):
@@ -204,6 +225,11 @@ class UserInfoMixin(object):
             users=self.get_user()
         ).select_related('software')
 
+    def get_simcard_queryset(self):
+        return SIMCard.objects.filter(
+            user=self.get_user()
+        )
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         # TODO: check permission to field or model
@@ -212,13 +238,14 @@ class UserInfoMixin(object):
             [
                 'id', 'model__category__name', 'model__manufacturer__name',
                 'model__name', 'sn', 'barcode', 'remarks', 'status',
-                'buyout_date', 'url'
+                'buyout_date',
             ],
             ['user_licence']
         )
         context['licence_list'] = AssignedLicenceList(
             self.get_licence_queryset(),
-            ['id', 'software__name', 'niw', 'url']
+            ['id', 'manufacturer', 'software__name',
+             'licence_type', 'sn', 'valid_thru']
         )
         return context
 
@@ -260,7 +287,7 @@ class RalphUserAdmin(UserAdmin, RalphAdmin):
     readonly_fields = ('api_token_key',)
     fieldsets = (
         (None, {
-            'fields': ('username', 'password', 'api_token_key')
+            'fields': ('username',)
         }),
         (_('Personal info'), {
             'fields': ('first_name', 'last_name', 'email')
@@ -291,6 +318,18 @@ class RalphUserAdmin(UserAdmin, RalphAdmin):
         return super().get_queryset(*args, **kwargs).select_related(
             'auth_token'
         )
+
+    def user_change_password(self, request, id, form_url=''):
+        # This is backport of django #29686 ticket
+        # https://code.djangoproject.com/ticket/29686
+        # Django does not pass user object to has_change_permission method
+        # And this causes to check only has_view_permission
+        user = self.get_object(request, unquote(id))
+
+        if not self.has_change_permission(request, obj=user):
+            raise PermissionDenied
+
+        return super().user_change_password(request, id, form_url)
 
 
 @register(Group)

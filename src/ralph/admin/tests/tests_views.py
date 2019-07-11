@@ -65,6 +65,7 @@ FACTORY_MAP = {
     'ralph.domains.models.domains.DomainCategory': 'ralph.domains.tests.factories.DomainCategoryFactory',  # noqa
     'ralph.domains.models.domains.DomainContract': 'ralph.domains.tests.factories.DomainContractFactory',  # noqa
     'ralph.domains.models.domains.DomainRegistrant': 'ralph.domains.tests.factories.DomainRegistrantFactory',  # noqa
+    'ralph.domains.models.domains.DomainProviderAdditionalServices': 'ralph.domains.tests.factories.DomainProviderAdditionalServicesFactory',  # noqa
     'ralph.licences.models.Licence': 'ralph.licences.tests.factories.LicenceFactory',  # noqa
     'ralph.licences.models.LicenceType': 'ralph.licences.tests.factories.LicenceTypeFactory',  # noqa
     'ralph.licences.models.Software': 'ralph.licences.tests.factories.SoftwareFactory',  # noqa
@@ -85,14 +86,24 @@ FACTORY_MAP = {
     'ralph.supports.models.BaseObjectsSupport': 'ralph.supports.tests.factories.BaseObjectsSupportFactory',  # noqa
     'ralph.supports.models.Support': 'ralph.supports.tests.factories.SupportFactory',  # noqa
     'ralph.supports.models.SupportType': 'ralph.supports.tests.factories.SupportTypeFactory',  # noqa
+    'ralph.trade_marks.models.TradeMark': 'ralph.trade_marks.tests.factories.TradeMarkFactory', #noqa
+    'ralph.trade_marks.models.TradeMarksLinkedDomains': 'ralph.trade_marks.tests.factories.TradeMarksLinkedDomainsFactory',  # noqa
+    'ralph.trade_marks.models.ProviderAdditionalMarking': 'ralph.trade_marks.tests.factories.ProviderAdditionalMarkingFactory',  # noqa
+    'ralph.trade_marks.models.TradeMarkCountry': 'ralph.trade_marks.tests.factories.TradeMarkCountryFactory',  # noqa
+    'ralph.trade_marks.models.TradeMarkRegistrarInstitution': 'ralph.trade_marks.tests.factories.TradeMarkRegistrarInstitutionFactory',  # noqa
     'ralph.virtual.models.CloudFlavor': 'ralph.virtual.tests.factories.CloudFlavorFactory',  # noqa
     'ralph.virtual.models.CloudHost': 'ralph.virtual.tests.factories.CloudHostFullFactory',  # noqa
+    'ralph.virtual.models.CloudImage': 'ralph.virtual.tests.factories.CloudImageFactory',  # noqa
     'ralph.virtual.models.CloudProject': 'ralph.virtual.tests.factories.CloudProjectFactory',  # noqa
     'ralph.virtual.models.CloudProvider': 'ralph.virtual.tests.factories.CloudProviderFactory',  # noqa
+    'ralph.virtual.models.CloudSyncProcessor': 'ralph.virtual.tests.factories.CloudSyncProcessorFactory',  # noqa
     'ralph.virtual.models.VirtualServer': 'ralph.virtual.tests.factories.VirtualServerFullFactory',  # noqa
     'ralph.virtual.models.VirtualServerType': 'ralph.virtual.tests.factories.VirtualServerTypeFactory',  # noqa
     'ralph.security.models.Vulnerability': 'ralph.security.tests.factories.VulnerabilityFactory',  # noqa
     'ralph.security.models.SecurityScan': 'ralph.security.tests.factories.SecurityScanFactory',  # noqa
+    'ralph.sim_cards.models.SIMCard': 'ralph.sim_cards.tests.factories.SIMCardFactory',  # noqa
+    'ralph.sim_cards.models.CellularCarrier': 'ralph.sim_cards.tests.factories.CellularCarrierFactory',  # noqa
+    'ralph.sim_cards.models.SIMCardFeatures': 'ralph.sim_cards.tests.factories.SIMCardFeatureFactory',  # noqa'
 }
 
 EXCLUDE_MODELS = [

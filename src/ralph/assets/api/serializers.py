@@ -70,7 +70,7 @@ class BudgetInfoSerializer(RalphAPISerializer):
 class ProfitCenterSerializer(RalphAPISerializer):
     class Meta:
         model = ProfitCenter
-        fields = ('id', 'name', 'description', 'url', 'business_segment')
+        fields = ('id', 'name', 'description', 'url')
         depth = 1
 
 
@@ -437,9 +437,16 @@ class ComponentSerializerMixin(NetworkComponentSerializerMixin):
     processors = ProcessorSimpleSerializer(many=True, source='processor_set')
 
 
+class SecurityScanField(serializers.Field):
+
+    def to_representation(self, value):
+        if value and value.pk:
+            return SecurityScanSerializer().to_representation(value)
+
+
 class DCHostSerializer(ComponentSerializerMixin, BaseObjectSerializer):
     hostname = fields.CharField()
-    securityscan = SecurityScanSerializer()
+    securityscan = SecurityScanField()
 
     class Meta:
         model = BaseObject

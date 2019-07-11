@@ -10,12 +10,21 @@ from django.shortcuts import get_object_or_404
 from django.utils.translation import ugettext_lazy as _
 from django.views.generic import View
 
-from ralph.accounts.admin import AssetList, AssignedLicenceList, UserInfoMixin
+from ralph.accounts.admin import (
+    AssetList,
+    AssignedLicenceList,
+    AssignedSimcardsList,
+    UserInfoMixin
+)
 from ralph.accounts.helpers import (
+    ACCEPTANCE_LOAN_TRANSITION_ID,
     acceptance_transition_exists,
     ACCEPTANCE_TRANSITION_ID,
     get_acceptance_url,
-    get_assets_to_accept
+    get_assets_to_accept,
+    get_assets_to_accept_loan,
+    get_loan_acceptance_url,
+    loan_transition_exists
 )
 from ralph.admin.mixins import RalphBaseTemplateView, RalphTemplateView
 from ralph.back_office.models import BackOfficeAsset
@@ -113,7 +122,7 @@ class InventoryTagView(View):
 
     def post(self, request, *args, **kwargs):
         asset = get_object_or_404(BackOfficeAsset, id=request.POST['asset_id'])
-        if(
+        if (
             asset.user_id != request.user.id or
             not (
                 asset.warehouse.stocktaking_enabled or
@@ -132,7 +141,11 @@ class InventoryTagView(View):
 
 class _AcceptanceProcessByCurrentUserMixin(object):
     def post(self, request, *args, **kwargs):
-        acceptance_url = get_acceptance_url(request.user)
+        action = request.POST['action']
+        if action == 'accept':
+            acceptance_url = get_acceptance_url(request.user)
+        else:
+            acceptance_url = get_loan_acceptance_url(request.user)
         if acceptance_url:
             return HttpResponseRedirect(acceptance_url)
         return super().get(request, *args, **kwargs)
@@ -142,6 +155,9 @@ class _AcceptanceProcessByCurrentUserMixin(object):
         context['acceptance_transition_id'] = ACCEPTANCE_TRANSITION_ID
         context['acceptance_transition_exists'] = acceptance_transition_exists()  # noqa: E501
         context['assets_to_accept'] = get_assets_to_accept(self.request.user)
+        context['loan_transition_id'] = ACCEPTANCE_LOAN_TRANSITION_ID
+        context['loan_transition_exists'] = loan_transition_exists()
+        context['assets_to_loan'] = get_assets_to_accept_loan(self.request.user)  # noqa: E501
         return context
 
 
@@ -169,7 +185,7 @@ class CurrentUserInfoView(
         asset_fields = [
             'user', ('barcode', _('Barcode / Inventory Number')),
             'model__category__name', 'model__manufacturer__name',
-            'model__name', ('sn', _('Serial Number')), 'invoice_date', 'status'
+            'model__name', ('sn', _('Serial Number')), 'invoice_date', 'status',
         ]
 
         if settings.MY_EQUIPMENT_SHOW_BUYOUT_DATE:
@@ -177,6 +193,9 @@ class CurrentUserInfoView(
 
         if settings.MY_EQUIPMENT_REPORT_FAILURE_URL:
             asset_fields += ['report_failure']
+
+        if settings.MY_EQUIPMENT_BUYOUT_URL and settings.MY_EQUIPMENT_SHOW_BUYOUT_DATE:  # noqa
+            asset_fields += ['buyout_ticket']
 
         warehouse_stocktaking_enabled = BackOfficeAsset.objects.filter(
             user=self.request.user, warehouse__stocktaking_enabled=True
@@ -198,11 +217,24 @@ class CurrentUserInfoView(
         context['licence_list'] = AssignedLicenceList(
             self.get_licence_queryset(),
             [
-                ('niw', _('Inventory Number')), 'software__name', 'sn',
-                'invoice_date'
+                ('niw', _('Inventory Number')), 'manufacturer',
+                'software__name', 'licence_type', 'sn',
+                'valid_thru'
             ],
             request=self.request,
         )
+
+        context['simcard_list'] = AssignedSimcardsList(
+            self.get_simcard_queryset(),
+            [
+                ('phone_number', _('Phone Number')),
+                ('card_number', _('Card Number')),
+                ('pin1', _('PIN 1'))
+
+            ],
+            request=self.request,
+        )
+
         return context
 
     def get_links(self):

@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
-
 from dj.choices import Choices
-from django.conf import settings
 from django.db import models
 from django.utils.translation import ugettext_lazy as _
 
@@ -27,23 +24,15 @@ class SSLCertificate(AdminAbsoluteUrlMixin, BaseObject):
         help_text=_('Full certificate name'),
         max_length=255
     )
+    domain_ssl = models.CharField(
+        verbose_name=_('domain name'),
+        blank=True,
+        help_text=_('Full domain name'),
+        max_length=255
+    )
     certificate_type = models.PositiveIntegerField(
         choices=CertificateType(),
         default=CertificateType.ov.id,
-    )
-    business_owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name='certificates_business_owner',
-        blank=True,
-        null=True,
-        help_text=_('Business contact person for a certificate')
-    )
-    technical_owner = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        related_name='certificates_technical_owner',
-        blank=True,
-        null=True,
-        help_text=_('Technical contact person for a certificate')
     )
     issued_by = models.ForeignKey(
         Manufacturer,

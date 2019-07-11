@@ -5,6 +5,8 @@ from collections import ChainMap
 
 from django.contrib.messages import constants as messages
 
+from ralph.settings.hooks import HOOKS_CONFIGURATION  # noqa: F401
+
 
 def bool_from_env(var, default: bool=False) -> bool:
     """Helper for converting env string into boolean.
@@ -20,6 +22,21 @@ def bool_from_env(var, default: bool=False) -> bool:
         return default
     else:
         return str_to_bool(os_var)
+
+
+def get_sentinels(sentinels_string):
+    """ Helper for converting sentinel hosts string into list of tuples.
+
+    sentinel_string must be a string in the following format:
+    <sentinel_ip>:<sentinel_port>;<sentinel_ip>:<sentinel_port>
+
+    Returns a list of sentinel host and port tuples
+    """
+    if sentinels_string:
+        sentinels = sentinels_string.split(';')
+        result = [tuple(sentinel.split(':')) for sentinel in sentinels]
+        return result
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -60,6 +77,8 @@ INSTALLED_APPS = (
     'ralph.deployment',
     'ralph.licences',
     'ralph.domains',
+    'ralph.trade_marks',
+    'ralph.sim_cards',
     'ralph.supports',
     'ralph.security',
     'ralph.lib.foundation',
@@ -74,6 +93,7 @@ INSTALLED_APPS = (
     'ralph.lib.transitions',
     'ralph.lib.permissions',
     'ralph.lib.custom_fields',
+    'ralph.lib.hooks',
     'ralph.notifications',
     'ralph.ssl_certificates',
     'rest_framework',
@@ -120,7 +140,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'ralph.wsgi.application'
 
-MYSQL_OPTIONS = {
+DEFAULT_DATABASE_OPTIONS = {
     'sql_mode': 'TRADITIONAL',
     'charset': 'utf8',
     'init_command': """
@@ -129,19 +149,25 @@ MYSQL_OPTIONS = {
     SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED;
     """
 }
+DATABASE_OPTIONS_FROM_ENV = os.environ.get('DATABASE_OPTIONS', None)
+DATABASE_OPTIONS = (
+    json.loads(DATABASE_OPTIONS_FROM_ENV)
+    if DATABASE_OPTIONS_FROM_ENV else DEFAULT_DATABASE_OPTIONS
+)
+
 DATABASE_SSL_CA = os.environ.get('DATABASE_SSL_CA', None)
 if DATABASE_SSL_CA:
-    MYSQL_OPTIONS.update({'ssl': {'ca': DATABASE_SSL_CA}})
+    DATABASE_OPTIONS.update({'ssl': {'ca': DATABASE_SSL_CA}})
 
 DATABASES = {
     'default': {
-        'ENGINE': 'transaction_hooks.backends.mysql',
+        'ENGINE': os.environ.get('DATABASE_ENGINE', 'transaction_hooks.backends.mysql'),  # noqa
         'NAME': os.environ.get('DATABASE_NAME', 'ralph_ng'),
         'USER': os.environ.get('DATABASE_USER', 'ralph_ng'),
         'PASSWORD': os.environ.get('DATABASE_PASSWORD', 'ralph_ng') or None,
         'HOST': os.environ.get('DATABASE_HOST', '127.0.0.1'),
         'PORT': os.environ.get('DATABASE_PORT', 3306),
-        'OPTIONS': MYSQL_OPTIONS,
+        'OPTIONS': DATABASE_OPTIONS,
         'ATOMIC_REQUESTS': True,
         'TEST': {
             'NAME': 'test_ralph_ng',
@@ -288,37 +314,61 @@ if API_THROTTLING:
         }
     })
 
-REDIS_MASTER_IP = None
-REDIS_MASTER_PORT = None
-
+REDIS_PASSWORD = os.environ.get('REDIS_PASSWORD', 'ralph_ng')
 REDIS_SENTINEL_ENABLED = bool_from_env('REDIS_SENTINEL_ENABLED', False)
+REDIS_SOCKET_TIMEOUT = float(os.environ.get('REDIS_SOCKET_TIMEOUT', 1.0))
+REDIS_CONNECT_TIMEOUT = float(os.environ.get('REDIS_CONNECT_TIMEOUT', 1.0))
+REDIS_COMMAND_TIMEOUT = float(os.environ.get('REDIS_COMMAND_TIMEOUT', 10.0))
+
 if REDIS_SENTINEL_ENABLED:
     from redis.sentinel import Sentinel
 
-    # REDIS_SENTINEL_HOSTS env variable format: host_1:port;host_2:port
-    REDIS_SENTINEL_HOSTS = os.environ['REDIS_SENTINEL_HOSTS'].split(';')
-    REDIS_CLUSTER_NAME = os.environ['REDIS_CLUSTER_NAME']
+    REDIS_SENTINEL_HOSTS = get_sentinels(os.environ.get('REDIS_SENTINEL_HOSTS', None))  # noqa
+    REDIS_CLUSTER_NAME = os.environ.get('REDIS_CLUSTER_NAME', 'ralph_ng')
+    REDIS_SENTINEL_SOCKET_TIMEOUT = float(os.environ.get('REDIS_SENTINEL_SOCKET_TIMEOUT', 1.0))  # noqa
 
     sentinel = Sentinel(
-        [tuple(s_host.split(':')) for s_host in REDIS_SENTINEL_HOSTS],
-        socket_timeout=float(
-            os.environ.get('REDIS_SENTINEL_SOCKET_TIMEOUT', 0.2)
-        )
+        REDIS_SENTINEL_HOSTS,
+        socket_timeout=REDIS_SENTINEL_SOCKET_TIMEOUT,
+        password=REDIS_PASSWORD
     )
-    REDIS_MASTER_IP, REDIS_MASTER_PORT = sentinel.discover_master(
-        REDIS_CLUSTER_NAME
-    )
+    REDIS_MASTER = sentinel.master_for(REDIS_CLUSTER_NAME)
 
-REDIS_CONNECTION = {
-    'HOST': REDIS_MASTER_IP or os.environ.get('REDIS_HOST', 'localhost'),
-    'PORT': REDIS_MASTER_PORT or os.environ.get('REDIS_PORT', '6379'),
-    'DB': int(os.environ.get('REDIS_DB', 0)),
-    'PASSWORD': os.environ.get('REDIS_PASSWORD', ''),
-    # timeout for executing commands
-    'TIMEOUT': float(os.environ.get('REDIS_TIMEOUT', 10.0)),
-    # timeout for connecting through socket to redis
-    'CONNECT_TIMEOUT': float(os.environ.get('REDIS_CONNECT_TIMEOUT', 1.0)),
-}
+    REDIS_CONNECTION = {
+        'SENTINELS': REDIS_SENTINEL_HOSTS,
+        'DB': int(os.environ.get('REDIS_DB', 0)),
+        'PASSWORD': REDIS_PASSWORD,
+        'TIMEOUT': REDIS_COMMAND_TIMEOUT,
+        'CONNECT_TIMEOUT': REDIS_CONNECT_TIMEOUT,
+    }
+    RQ_QUEUES = {
+        'default': {
+            'SENTINELS': REDIS_SENTINEL_HOSTS,
+            'MASTER_NAME': REDIS_CLUSTER_NAME,
+            'DB': int(os.environ.get('REDIS_DB', 0)),
+            'PASSWORD': REDIS_PASSWORD,
+            'CONNECTION_KWARGS': {
+                'socket_connect_timeout': REDIS_CONNECT_TIMEOUT,
+                'retry_on_timeout': True
+            },
+        },
+    }
+else:
+    REDIS_MASTER_IP = None
+    REDIS_MASTER_PORT = None
+    REDIS_CONNECTION = {
+            'HOST': REDIS_MASTER_IP or os.environ.get('REDIS_HOST', 'localhost'),  # noqa
+            'PORT': REDIS_MASTER_PORT or os.environ.get('REDIS_PORT', '6379'),
+            'DB': int(os.environ.get('REDIS_DB', 0)),
+            'PASSWORD': os.environ.get('REDIS_PASSWORD', ''),
+            'TIMEOUT': REDIS_COMMAND_TIMEOUT,
+            'CONNECT_TIMEOUT': REDIS_CONNECT_TIMEOUT,
+        }
+    RQ_QUEUES = {
+        'default': dict(
+            **REDIS_CONNECTION
+        )
+    }
 
 # set to False to turn off cache decorator
 USE_CACHE = bool_from_env('USE_CACHE', True)
@@ -334,11 +384,6 @@ BACKOFFICE_HOSTNAME_FIELD_READONLY = bool_from_env(
 
 TAGGIT_CASE_INSENSITIVE = True  # case insensitive tags
 
-RQ_QUEUES = {
-    'default': dict(
-        **REDIS_CONNECTION
-    )
-}
 RALPH_QUEUES = {
     'ralph_ext_pdf': {},
     'ralph_async_transitions': {
@@ -384,6 +429,7 @@ DEPLOYMENT_MAX_DNS_ENTRIES_TO_CLEAN = 30
 MY_EQUIPMENT_LINKS = json.loads(os.environ.get('MY_EQUIPMENT_LINKS', '[]'))
 MY_EQUIPMENT_REPORT_FAILURE_URL = os.environ.get('MY_EQUIPMENT_REPORT_FAILURE_URL', '')  # noqa
 MY_EQUIPMENT_SHOW_BUYOUT_DATE = bool_from_env('MY_EQUIPMENT_SHOW_BUYOUT_DATE')
+MY_EQUIPMENT_BUYOUT_URL = os.environ.get('MY_EQUIPMENT_BUYOUT_URL', '')
 
 # Sets URL shown to user if they declare that they dp not have specific asset.
 MISSING_ASSET_REPORT_URL = os.environ.get('MISSING_ASSET_REPORT_URL', None)
@@ -409,7 +455,21 @@ ACCEPT_ASSETS_FOR_CURRENT_USER_CONFIG = {
     # in_progress by default
     'BACK_OFFICE_ACCEPT_STATUS': os.environ.get(
         'ACCEPT_ASSETS_FOR_CURRENT_USER_BACK_OFFICE_ACCEPT_STATUS', 2
-    )
+    ),
+    'LOAN_TRANSITION_ID': os.environ.get(
+        'LOAN_ASSETS_FOR_CURRENT_USER_TRANSITION_ID', None
+    ),
+    # loan_in_progress by default
+    'BACK_OFFICE_ACCEPT_LOAN_STATUS': os.environ.get(
+        'LOAN_ASSETS_FOR_CURRENT_USER_BACK_OFFICE_ACCEPT_STATUS', 13
+    ),
+    'RETURN_TRANSITION_ID': os.environ.get(
+        'RETURN_ASSETS_FOR_CURRENT_USER_TRANSITION_ID', None
+    ),
+    # waiting_for_return by default
+    'BACK_OFFICE_ACCEPT_RETURN_STATUS': os.environ.get(
+        'RETURN_ASSESTS_FOR_CURRENT_USER_BACK_OFFICE_ACCEPT_STATUS', 14
+    ),
 }
 RELEASE_REPORT_CONFIG = {
     # report with name 'release' is by default
@@ -592,3 +652,6 @@ ALLOW_PUSH_GRAPHS_DATA_TO_STATSD = False
 STATSD_GRAPHS_PREFIX = 'ralph.graphs'
 
 TRANSITION_TEMPLATES = None
+
+CONVERT_TO_DATACENTER_ASSET_DEFAULT_STATUS_ID = 1
+CONVERT_TO_BACKOFFICE_ASSET_DEFAULT_STATUS_ID = 1

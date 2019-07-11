@@ -35,6 +35,7 @@ from ralph.assets.models.configuration import (
 from ralph.data_importer import resources
 from ralph.lib.custom_fields.admin import CustomFieldValueAdminMixin
 from ralph.lib.table import Table, TableWithUrl
+from ralph.security.views import ScanStatusInTableMixin
 
 
 @register(ConfigurationClass)
@@ -132,7 +133,7 @@ class ServiceEnvironmentInline(RalphTabularInline):
     fields = ('environment',)
 
 
-class BaseObjectsList(Table):
+class BaseObjectsList(ScanStatusInTableMixin, Table):
     def url(self, item):
         return '<a href="{}">{}</a>'.format(
             item.get_absolute_url(),
@@ -154,7 +155,9 @@ class ServiceBaseObjects(RalphDetailView):
     def get_service_base_objects_queryset(self):
         return BaseObject.polymorphic_objects.filter(
             service_env__service=self.object
-        ).select_related('service_env__environment', 'content_type')
+        ).select_related(
+            'service_env__environment', 'content_type', 'securityscan'
+        )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -162,7 +165,8 @@ class ServiceBaseObjects(RalphDetailView):
             self.get_service_base_objects_queryset(),
             [
                 'id', ('content_type', _('type')),
-                ('service_env__environment', _('environment')), '_str', 'url',
+                ('service_env__environment', _('environment')), '_str',
+                'scan_status', 'url',
             ]
         )
         return context
@@ -182,25 +186,31 @@ class ServiceBaseObjects(RalphDetailView):
         )
 
 
+@register(ManufacturerKind)
+class ManufacturerKindAdmin(RalphAdmin):
+
+    search_fields = ['name']
+
+
 @register(Service)
 class ServiceAdmin(RalphAdmin):
+    list_display = ['name', 'uid', 'active', 'business_segment']
+    search_fields = ['name', 'uid']
+    list_filter = [
+        'active', 'business_segment', 'profit_center', 'support_team'
+    ]
+    list_select_related = ['business_segment']
+
     fields = (
-        'name', 'uid', 'active', 'profit_center', 'cost_center',
-        'technical_owners', 'business_owners', 'support_team',
+        'name', 'uid', 'active', 'profit_center', 'business_segment',
+        'cost_center', 'technical_owners', 'business_owners', 'support_team',
     )
     inlines = [ServiceEnvironmentInline]
-    search_fields = ['name', 'uid']
     raw_id_fields = [
         'profit_center', 'support_team', 'business_owners', 'technical_owners'
     ]
     resource_class = resources.ServiceResource
     change_views = [ServiceBaseObjects]
-
-
-@register(ManufacturerKind)
-class ManufacturerKindAdmin(RalphAdmin):
-
-    search_fields = ['name']
 
 
 @register(Manufacturer)
@@ -228,6 +238,15 @@ class EnvironmentAdmin(RalphAdmin):
 class BusinessSegmentAdmin(RalphAdmin):
 
     search_fields = ['name']
+    list_display = ['name', 'services_count']
+
+    def get_queryset(self, request):
+        return BusinessSegment.objects.annotate(services_count=Count('service'))
+
+    def services_count(self, instance):
+        return instance.services_count
+    services_count.short_description = _('Services count')
+    services_count.admin_order_field = 'services_count'
 
 
 @register(ProfitCenter)
